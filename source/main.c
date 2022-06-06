@@ -4,7 +4,13 @@
 #include "nand.h"
 #include "sha.h"
 #include "firms_bin.h"
+#include "hid.h"
+#include "validator.h"
+#include "unittype.h"
 
+u8 pubk[256] = { 0xDE, 0xCF, 0xB6, 0xFC, 0x3D, 0x33, 0xE9, 0x55, 0xFD, 0xAC, 0x90, 0xE8, 0x88, 0x17, 0xB0, 0x03, 0xA1, 0x6B, 0x9A, 0xAB, 0x72, 0x70, 0x79, 0x32, 0xA2, 0xA0, 0x8C, 0xBB, 0x33, 0x6F, 0xB0, 0x76, 0x96, 0x2E, 0xC4, 0xE9, 0x2E, 0xD8, 0x8F, 0x92, 0xC0, 0x2D, 0x4D, 0x41, 0x0F, 0xDE, 0x45, 0x1B, 0x25, 0x3C, 0xBE, 0x37, 0x6B, 0x45, 0x82, 0x21, 0xE6, 0x4D, 0xB1, 0x23, 0x81, 0x82, 0xB6, 0x81, 0x62, 0xB7, 0x30, 0xF4, 0x60, 0x4B, 0xC7, 0xF7, 0xF0, 0x17, 0x0C, 0xB5, 0x75, 0x88, 0x77, 0x93, 0x52, 0x63, 0x70, 0xF0, 0x0B, 0xC6, 0x73, 0x43, 0x41, 0xEE, 0xE4, 0xF0, 0x71, 0xEC, 0xC8, 0xC1, 0x32, 0xC4, 0xDC, 0xA9, 0x99, 0x1D, 0x31, 0xB8, 0xA4, 0x7E, 0xDD, 0x19, 0x04, 0x0F, 0x02, 0xA8, 0x1A, 0xAF, 0xB3, 0x48, 0x9A, 0x29, 0x29, 0x5E, 0x49, 0x84, 0xE0, 0x94, 0x11, 0xD1, 0x7E, 0xAB, 0xB2, 0xC0, 0x44, 0x7E, 0xA1, 0x1B, 0x5E, 0x9D, 0x0D, 0x1A, 0xF9, 0x02, 0x9A, 0x2E, 0x53, 0x03, 0x2D, 0x48, 0x96, 0x7C, 0x2C, 0xA6, 0xD7, 0xAC, 0xF1, 0xED, 0x2B, 0x18, 0xBB, 0x01, 0xCB, 0x13, 0xB9, 0xAC, 0xA6, 0xEE, 0x55, 0x00, 0x37, 0x7C, 0x69, 0x61, 0x62, 0x89, 0x01, 0x54, 0x77, 0x9F, 0x07, 0x5D, 0x26, 0x34, 0x3A, 0xA9, 0x49, 0xA5, 0xAF, 0xF2, 0x5E, 0x06, 0x51, 0xB7, 0x1C, 0xE0, 0xDE, 0xDA, 0x5C, 0x0B, 0x9F, 0x98, 0xC2, 0x15, 0xFD, 0xBA, 0xD8, 0xA9, 0x99, 0x00, 0xAB, 0xA4, 0x8E, 0x4A, 0x16, 0x9D, 0x66, 0x2A, 0xE8, 0x56, 0x64, 0xB2, 0xB6, 0xC0, 0x93, 0xAF, 0x4D, 0x38, 0xA0, 0x16, 0x5C, 0xE4, 0xBD, 0x62, 0xC2, 0x46, 0x6B, 0xC9, 0x5A, 0x59, 0x4A, 0x72, 0x58, 0xFD, 0xB2, 0xCC, 0x36, 0x87, 0x30, 0x85, 0xE8, 0xA1, 0x04, 0x5B, 0xE0, 0x17, 0x9B, 0xD0, 0xEC, 0x9B };
+
+u8 ncsd_sighax_header[8] = {0x6C,0xF5,0x2F,0x89,0xF3,0x78,0x12,0x0B};  //this is plenty for a simple comparison
 
 void powerOff()
 {
@@ -16,12 +22,19 @@ u8 *top_screen, *bottom_screen;
 
 void main(int argc, char** argv)
 {
-	u8 buf[0x200];
+	u8 *buf=(u8*)0x23a00000;
 	u32 sha[0x8];	
-	char output[200]={0};
-	char *FIRM[2];
+	char output[65]={0};
+	char *FIRM[8];
+	NandNcsdHeader ncsd;
 	int is_b9s;	
 	int found=0;
+	//NandPartitionInfo info;
+	int index=0;
+	u32 errorcode=0;
+	u32 size=0;
+	int boot=0;
+	int modded=0;
 	
 	// Fetch the framebuffer addresses
 	if(argc >= 2) {
@@ -37,37 +50,92 @@ void main(int argc, char** argv)
 	
 	ClearScreenF(true, true, COLOR_STD_BG);
 	InitNandCrypto();
+	
+	int x=90, xb=0, y=40, yb=170, res=0;	// x/y variables with "b" suffix are bottom screen coordinates
+	
+	//top
+	DrawStringF(top_screen, x, y,  0xffffff, 0x000000, "--- b9s_check 2.5 - zoogie"); y+=20;
+	if(IS_DEVKIT) {DrawStringF(top_screen, x, y,  0x00ffff, 0x000000, "WARNING: Dev units not supported"); y+=10;}
+	ReadNandSectors(&ncsd, 0, 1, 0xff);
+	if(!memcmp(ncsd_sighax_header, &ncsd.signature, 8)) {DrawStringF(top_screen, x, y,  0x00ffff, 0x000000, "WARNING: NAND header is modified!"); y+=10; modded=1;}
+	
+	//bottom
+	if(modded) DrawStringF(bottom_screen, (8*24), 90,  0x00ffff, 0x000000, "NCSD debug info");
+	DrawStringF(bottom_screen, xb, yb,  0xff00ff, 0x000000, "errorcode (bitmasks):"); yb+=10;
+	DrawStringF(bottom_screen, xb, yb,  0xff00ff, 0x000000, "1 - FIRM magic or section hash bad"); yb+=10;
+	DrawStringF(bottom_screen, xb, yb,  0xff00ff, 0x000000, "2 - Bad RSA signature"); yb+=10;
+	DrawStringF(bottom_screen, xb, yb,  0xff00ff, 0x000000, "4 - FIRM magic or size issue"); yb+=10; 
+	DrawStringF(bottom_screen, xb, yb,  0xff00ff, 0x000000, "misc:"); yb+=10;
+	DrawStringF(bottom_screen, xb, yb,  0xff00ff, 0x000000, "[P?] - NAND partition index"); yb+=10;
+	DrawStringF(bottom_screen, xb, yb,  0xff00ff, 0x000000, "   > - Booted FIRM"); 
+	yb=10;
 
-	//ReadNandSectors(void* buffer, u32 sector, u32 count, u32 keyslot);
-	for(int i=0; i < 2; i++){
-		
-		ReadNandSectors(buf,(i*0x400000+0xB130000)/0x200, 1, 0x6);
-		sha_quick(sha, buf, 0x100, SHA256_MODE);
-		is_b9s = memcmp("B9S", buf + 0x3D, 3);
-		
-		for(int h=0; h < firms_bin_size; h+=0x30){
-			if(firms_bin[h+0x2f]){  //guarantee null terminator!
-				FIRM[i]="String error";
-				found=2;
-				break;
+	
+	for(int i=0; i < 8; i++){
+		if(ncsd.partitions_fs_type[i] == 3 && ncsd.partitions[i].offset <  0x80000000/0x200 && ncsd.partitions[i].size <= 0x400000/0x200){
+			ReadNandSectors(buf, ncsd.partitions[i].offset , 2, 0x6);
+			sha_quick(sha, buf, 0x100, SHA256_MODE);
+			is_b9s = memcmp("B9S", buf + 0x3D, 3);
+			
+			for(u32 h=0; h < firms_bin_size; h+=0x30){
+				if(firms_bin[h+0x2f]){  //guarantee null terminator!
+					FIRM[index]="String error";
+					found=2;
+					break;
+				}
+				if(!memcmp(sha, firms_bin + h, 0x8)){
+					FIRM[index]=(char*)(firms_bin+h+8);
+					found=1;
+					break;
+				}
 			}
-			if(!memcmp(sha, firms_bin + h, 0x8)){
-				FIRM[i]=&firms_bin[h+8];
-				found=1;
-				break;
+			
+			if(!found){
+				if(is_b9s) FIRM[index]="Unknown"; 
+				else       FIRM[index]="B9S nightly/custom";			
 			}
-		}
-		
-		if(!found){
-			if(is_b9s) FIRM[i]="Unknown"; 
-			else       FIRM[i]="B9S Nightly";			
-		}
+			
+			size = ValidateFirmHeader(buf, 0x400000);
+			if(size < 0x200) errorcode |= 4;
+			else{
+				ReadNandSectors(buf, ncsd.partitions[i].offset , size/0x200, 0x6);			
+				
+				res = ValidateFirm(buf, NULL, 0x400000, output);
+				if(res) errorcode |= 1;
+				
+				if(CheckFirmSigHax(buf)){
+					res = ValidateFirmSignature(buf, pubk);
+					if(res) errorcode |= 2;
+				}
+			}
+			
+			if(!(errorcode & 0xffff) && !boot) {DrawStringF(top_screen, x-8, y,  0xffffff, 0x000000, ">"); boot=1;}
+			DrawStringF(top_screen, x, y,  0xffffff, 0x000000, "[P%d] FIRM%d: %s", i, index, FIRM[index]); y+=10;
+			
+			if(errorcode & 0xffff) {
+				DrawStringF(bottom_screen, xb, yb,  0x0000ff, 0x000000, "FIRM%d:%d %s", index, errorcode & 0xffff, output); yb+=10; errorcode |= 0x10000000;
+				DrawStringF(top_screen, x+(5*8), y-10,  0x0000ff, 0x000000, "FIRM%d", index); //color over bad firm with red to match bottom screen
+			}
+			else{
+				if(modded && size > ncsd.partitions[i].size*0x200){
+					DrawStringF(bottom_screen, (8*23), 90+(i*10),  0x00ffff, 0x000000, "!");  //
+				}
+			}
 
-		found=0;
+			found=0;
+			errorcode &= 0xf0000000;
+			memset(output, 0, 65);
+			index++;
+		}
+		if(modded) DrawStringF(bottom_screen, 0, 90+(i*10), ncsd.partitions_fs_type[i]==3 ? 0x00ffff:0x00C0C0, 0x000000, "%02X %02X %08X %08X", ncsd.partitions_fs_type[i], ncsd.partitions_crypto_type[i], ncsd.partitions[i].offset*0x200, ncsd.partitions[i].size*0x200);
 	}
 	
-	snprintf(output, 190, "--- b9s_check 2.0 - zoogie\nFIRM0: %s\nFIRM1: %s\n",FIRM[0], FIRM[1]);
-	ShowPrompt(false, output);
+	if(!errorcode) DrawStringF(bottom_screen, xb, 0,  0x00ff00, 0x000000, "No errors!");
+	else           DrawStringF(bottom_screen, xb, 0,  0x0000ff, 0x000000, "errorcodes");
+	
+	y+=10;
+	DrawStringF(top_screen, x, y,  0xffffff, 0x000000, "Press any key to exit");
+	InputWait();
 	
 	powerOff();
 }

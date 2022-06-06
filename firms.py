@@ -7,7 +7,7 @@ out=b""
 for i in firms:
     with open(i,"rb") as f:
         hash=hashlib.sha256(f.read(0x100)).digest()[:8]
-    filename=os.path.basename(i)
+    filename=os.path.basename(i).replace(".firm","")
     assert(len(filename) < 0x28)
     filename=filename+("\x00"*(0x28-len(filename)))
     out+=(hash+filename.encode('ascii'))

@@ -78,7 +78,7 @@ u32 ValidateFirmHeader(FirmHeader* header, u32 data_size) {
     if ((firm_size > FIRM_MAX_SIZE) || (data_size && (firm_size > data_size)))
         return 1;
     
-    return 0;
+    return firm_size;
 }
 
 u32 ValidateFirm(void* firm, u8* firm_sha, u32 firm_size, char* output) {
@@ -87,7 +87,7 @@ u32 ValidateFirm(void* firm, u8* firm_sha, u32 firm_size, char* output) {
     int section_arm9 = -1;
     
     // validate firm header
-    if (ValidateFirmHeader(header, firm_size) != 0)
+    if (ValidateFirmHeader(header, firm_size) == 1)
         return 1;
     
     // hash verify all available sections
